@@ -115,7 +115,7 @@ export default function App() {
     formData.append("pdf", file);
 
     try {
-      const response = await fetch("http://localhost:4000/upload", {
+      const response = await fetch("https://pdf-billing-backend.onrender.com/upload", {
         method: "POST",
         body: formData,
       });
