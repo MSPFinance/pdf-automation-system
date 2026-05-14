@@ -59,6 +59,15 @@ function copyText(text) {
   navigator.clipboard.writeText(text || "");
 }
 
+function getUniqueDocumentNumbers(invoiceNumber, numbers = []) {
+  const all = [invoiceNumber, ...numbers]
+    .filter(Boolean)
+    .map((value) => String(value).trim())
+    .filter((value) => value && value !== "Not Provided");
+
+  return [...new Set(all)];
+}
+
 export default function App() {
   const [documents, setDocuments] = useState([]);
   const [rules, setRules] = useState(defaultRules);
@@ -115,10 +124,13 @@ export default function App() {
     formData.append("pdf", file);
 
     try {
-      const response = await fetch("https://pdf-billing-backend.onrender.com/upload", {
-        method: "POST",
-        body: formData,
-      });
+      const response = await fetch(
+        "https://pdf-billing-backend.onrender.com/upload",
+        {
+          method: "POST",
+          body: formData,
+        }
+      );
 
       const data = await response.json();
 
@@ -367,7 +379,9 @@ export default function App() {
             <div style={{ display: "flex", justifyContent: "space-between", gap: 20 }}>
               <div>
                 <h2>{doc.fileName}</h2>
+
                 <p style={{ color: "#64748b" }}>Upload Date: {doc.createdAt}</p>
+
                 <span style={statusBadge(doc.status)}>{doc.status}</span>
 
                 {doc.processed && (
@@ -380,15 +394,24 @@ export default function App() {
               </div>
 
               <div style={{ display: "flex", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
-                <button onClick={() => updateDoc(doc.id, { status: "Approved" })} style={buttonGreen}>
+                <button
+                  onClick={() => updateDoc(doc.id, { status: "Approved" })}
+                  style={buttonGreen}
+                >
                   Approve
                 </button>
 
-                <button onClick={() => updateDoc(doc.id, { status: "Needs Review" })} style={buttonYellow}>
+                <button
+                  onClick={() => updateDoc(doc.id, { status: "Needs Review" })}
+                  style={buttonYellow}
+                >
                   Needs Review
                 </button>
 
-                <button onClick={() => updateDoc(doc.id, { status: "Rejected" })} style={buttonRed}>
+                <button
+                  onClick={() => updateDoc(doc.id, { status: "Rejected" })}
+                  style={buttonRed}
+                >
                   Reject
                 </button>
 
@@ -404,7 +427,10 @@ export default function App() {
                   Mark Processed
                 </button>
 
-                <button onClick={() => generateEmailDraft(doc)} style={buttonPurple}>
+                <button
+                  onClick={() => generateEmailDraft(doc)}
+                  style={buttonPurple}
+                >
                   Generate Email
                 </button>
               </div>
@@ -422,19 +448,16 @@ export default function App() {
 
                 <button
                   onClick={() => {
-                    const allNumbers = [
+                    const uniqueNumbers = getUniqueDocumentNumbers(
                       doc.extraction.invoiceNumber,
-                      ...numbers,
-                    ]
-                      .filter(Boolean)
-                      .filter((value) => value !== "Not Provided")
-                      .join("\n");
+                      numbers
+                    );
 
-                    copyText(allNumbers);
+                    copyText(uniqueNumbers.join("\n"));
                   }}
                   style={buttonLight}
                 >
-                  Copy All for Excel
+                  Copy Unique for Excel
                 </button>
               </div>
 
@@ -446,15 +469,12 @@ export default function App() {
                 </thead>
 
                 <tbody>
-                  <tr>
-                    <td style={miniTd}>
-                      {doc.extraction.invoiceNumber || "Not Provided"}
-                    </td>
-                  </tr>
-
-                  {numbers.map((num, idx) => (
+                  {getUniqueDocumentNumbers(
+                    doc.extraction.invoiceNumber,
+                    numbers
+                  ).map((num, idx) => (
                     <tr key={idx}>
-                      <td style={miniTd}>{num}</td>
+                      <td style={answerCell}>{num}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -469,7 +489,7 @@ export default function App() {
                   <input
                     value={doc.extraction[key] || ""}
                     onChange={(e) => updateField(doc.id, key, e.target.value)}
-                    style={input}
+                    style={answerInput}
                   />
                 </label>
               ))}
@@ -779,6 +799,19 @@ const input = {
   boxSizing: "border-box",
 };
 
+const answerInput = {
+  display: "block",
+  width: "100%",
+  marginTop: 6,
+  padding: 10,
+  borderRadius: 8,
+  border: "1px solid #ccc",
+  boxSizing: "border-box",
+  color: "#dc2626",
+  fontWeight: "bold",
+  WebkitTextFillColor: "#dc2626",
+};
+
 const textarea = {
   display: "block",
   width: "100%",
@@ -804,9 +837,11 @@ const miniTh = {
   background: "#f1f5f9",
 };
 
-const miniTd = {
+const answerCell = {
   borderBottom: "1px solid #e2e8f0",
   padding: 8,
+  color: "#dc2626",
+  fontWeight: "bold",
 };
 
 const emailBody = {
