@@ -68,6 +68,63 @@ function getUniqueDocumentNumbers(invoiceNumber, numbers = []) {
   return [...new Set(all)];
 }
 
+function calculateConfidence(doc) {
+  const e = doc.extraction || {};
+  let score = 0;
+  const notes = [];
+
+  const hasValue = (value) =>
+    value &&
+    String(value).trim() !== "" &&
+    String(value).toLowerCase() !== "not provided";
+
+  if (hasValue(e.invoiceNumber)) score += 20;
+  else notes.push("Missing invoice/document number");
+
+  if (hasValue(e.totalAmount)) score += 20;
+  else notes.push("Missing total amount");
+
+  if (hasValue(e.documentType)) score += 15;
+  else notes.push("Missing document type");
+
+  if (hasValue(e.receiverEntity)) score += 15;
+  else notes.push("Missing receiver entity");
+
+  if (hasValue(e.purchaseOrder)) score += 10;
+  else notes.push("Missing PO");
+
+  if (hasValue(e.receivingCountry) || hasValue(e.payingCountry)) score += 10;
+  else notes.push("Missing country");
+
+  if (Array.isArray(e.documentNumbers) && e.documentNumbers.length > 1)
+    score += 10;
+
+  if (doc.duplicateMatch) {
+    score -= 20;
+    notes.push("Possible duplicate");
+  }
+
+  if (e.extractionMethod === "Backup PDF Text Extractor") {
+    score -= 10;
+    notes.push("Backup extractor used");
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  let level = "LOW";
+  let reviewNeeded = "YES";
+
+  if (score >= 80) {
+    level = "HIGH";
+    reviewNeeded = "NO";
+  } else if (score >= 50) {
+    level = "MEDIUM";
+    reviewNeeded = "YES";
+  }
+
+  return { score, level, reviewNeeded, notes };
+}
+
 export default function App() {
   const [documents, setDocuments] = useState([]);
   const [rules, setRules] = useState(defaultRules);
@@ -91,7 +148,8 @@ export default function App() {
       ready: documents.filter((d) => d.status === "Ready for Payment").length,
       review: documents.filter((d) => d.status.includes("Review")).length,
       processed: documents.filter((d) => d.processed).length,
-      duplicates: documents.filter((d) => d.status === "Possible Duplicate").length,
+      duplicates: documents.filter((d) => d.status === "Possible Duplicate")
+        .length,
     }),
     [documents]
   );
@@ -104,18 +162,6 @@ export default function App() {
     if (file.type !== "application/pdf") {
       setError("Please upload a PDF file only.");
       return;
-    }
-
-    const alreadyUploaded = documents.find(
-      (doc) => doc.fileName.toLowerCase() === file.name.toLowerCase()
-    );
-
-    if (alreadyUploaded) {
-      const confirmContinue = window.confirm(
-        `This file appears to have already been uploaded/read:\n\n${file.name}\n\nDo you still want to process it again?`
-      );
-
-      if (!confirmContinue) return;
     }
 
     setLoading(true);
@@ -155,16 +201,6 @@ export default function App() {
 
         return sameInvoice || sameReceiverAmount;
       });
-
-      if (duplicateByData) {
-        window.alert(
-          `Possible duplicate or previous inquiry found.\n\nNew file: ${file.name}\nMatched file: ${duplicateByData.fileName}\n\nInvoice/Document Number: ${
-            extraction.invoiceNumber || "Not Provided"
-          }\nReceiver: ${extraction.receiverEntity || "Not Provided"}\nAmount: ${
-            extraction.totalAmount || "Not Provided"
-          }`
-        );
-      }
 
       setDocuments((prev) => [
         {
@@ -259,30 +295,6 @@ export default function App() {
     );
   }
 
-  function addRule() {
-    if (!ruleForm.receiverEntity || !ruleForm.receivingCountry || !ruleForm.sendTo) {
-      setError(
-        "Please complete Receiver Entity, Receiving Country, and Send To before adding a rule."
-      );
-      return;
-    }
-
-    setRules((prev) => [{ id: Date.now(), ...ruleForm }, ...prev]);
-
-    setRuleForm({
-      receiverEntity: "",
-      receivingCountry: "",
-      sendTo: "",
-      subject: "Invoice Review - {invoiceNumber}",
-      body:
-        "Hello,\n\nPlease find attached the reviewed document for {receiverEntity}.\n\nInvoice/Document Number: {invoiceNumber}\nAmount: {totalAmount}\nStatus: {status}\n\nRegards,\nMaggie",
-    });
-  }
-
-  function deleteRule(id) {
-    setRules((prev) => prev.filter((r) => r.id !== id));
-  }
-
   function handleFileSelect(event) {
     uploadPdf(event.target.files[0]);
     event.target.value = "";
@@ -357,15 +369,7 @@ export default function App() {
 
       {loading && <p style={{ textAlign: "center" }}>Processing PDF...</p>}
 
-      {error && (
-        <div style={errorBox}>
-          {error}
-          <br />
-          <button onClick={() => setError("")} style={buttonLight}>
-            Clear Error
-          </button>
-        </div>
-      )}
+      {error && <div style={errorBox}>{error}</div>}
 
       {documents.map((doc) => {
         const numbers = Array.isArray(doc.extraction.documentNumbers)
@@ -373,27 +377,35 @@ export default function App() {
           : [];
 
         const matchedRule = findRule(doc);
+        const confidence = calculateConfidence(doc);
 
         return (
           <div key={doc.id} style={card}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 20 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 20,
+              }}
+            >
               <div>
                 <h2>{doc.fileName}</h2>
 
-                <p style={{ color: "#64748b" }}>Upload Date: {doc.createdAt}</p>
+                <p style={{ color: "#64748b" }}>
+                  Upload Date: {doc.createdAt}
+                </p>
 
                 <span style={statusBadge(doc.status)}>{doc.status}</span>
-
-                {doc.processed && (
-                  <span style={processedBadge}>Processed / Worked On</span>
-                )}
-
-                {doc.emailed && (
-                  <span style={emailBadge}>Email Prepared/Sent</span>
-                )}
               </div>
 
-              <div style={{ display: "flex", gap: 10, alignItems: "start", flexWrap: "wrap" }}>
+              <div
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  alignItems: "start",
+                  flexWrap: "wrap",
+                }}
+              >
                 <button
                   onClick={() => updateDoc(doc.id, { status: "Approved" })}
                   style={buttonGreen}
@@ -414,36 +426,28 @@ export default function App() {
                 >
                   Reject
                 </button>
-
-                <button
-                  onClick={() =>
-                    updateDoc(doc.id, {
-                      processed: true,
-                      status: "Processed",
-                    })
-                  }
-                  style={buttonBlue}
-                >
-                  Mark Processed
-                </button>
-
-                <button
-                  onClick={() => generateEmailDraft(doc)}
-                  style={buttonPurple}
-                >
-                  Generate Email
-                </button>
               </div>
             </div>
 
-            {doc.duplicateMatch && (
-              <div style={duplicateBox}>
-                Possible duplicate match: <b>{doc.duplicateMatch}</b>
-              </div>
-            )}
+            <div style={confidenceBox(confidence.level)}>
+              <b>Confidence Score:</b> {confidence.score}% &nbsp; | &nbsp;
+              <b>Level:</b> {confidence.level} &nbsp; | &nbsp;
+              <b>Review Needed:</b> {confidence.reviewNeeded}
+              {confidence.notes.length > 0 && (
+                <div style={{ marginTop: 8 }}>
+                  <b>Reasons:</b> {confidence.notes.join(", ")}
+                </div>
+              )}
+            </div>
 
             <div style={copyPanel}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 10 }}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 10,
+                }}
+              >
                 <b>Copy-ready Document Numbers:</b>
 
                 <button
@@ -488,217 +492,51 @@ export default function App() {
 
                   <input
                     value={doc.extraction[key] || ""}
-                    onChange={(e) => updateField(doc.id, key, e.target.value)}
+                    onChange={(e) =>
+                      updateField(doc.id, key, e.target.value)
+                    }
                     style={answerInput}
                   />
                 </label>
               ))}
             </div>
 
-            <label style={{ ...label, display: "block", marginTop: 15 }}>
-              Status
-
-              <select
-                value={doc.status}
-                onChange={(e) => updateDoc(doc.id, { status: e.target.value })}
-                style={input}
-              >
-                <option>Ready for Payment</option>
-                <option>Needs PO</option>
-                <option>Manual Review</option>
-                <option>Finance Review</option>
-                <option>Reconciliation Required</option>
-                <option>Vendor Query Review</option>
-                <option>Archive as Paid</option>
-                <option>Possible Duplicate</option>
-                <option>Approved</option>
-                <option>Rejected</option>
-                <option>Processed</option>
-              </select>
-            </label>
-
-            <label style={{ ...label, display: "block", marginTop: 15 }}>
-              Finance Notes / Processing Notes
-
-              <textarea
-                value={doc.notes}
-                onChange={(e) => updateDoc(doc.id, { notes: e.target.value })}
-                placeholder="Add review notes, payment comments, duplicate notes, or processing comments."
-                style={textarea}
-              />
-            </label>
-
-            <div style={emailPanel}>
-              <h3>Email Rule Match & Template Preview</h3>
-
-              {matchedRule ? (
-                <p>
-                  Matched rule: <b>{matchedRule.receiverEntity}</b> /{" "}
-                  <b>{matchedRule.receivingCountry}</b>
-                </p>
-              ) : (
-                <p style={{ color: "#991b1b" }}>
-                  No rule matched this document yet.
-                </p>
-              )}
-
-              {doc.emailDraft && (
-                <div>
-                  <h3>Generated Email Preview</h3>
-
-                  <p>
-                    <b>To:</b> {doc.emailDraft.to || "Not Provided"}
-                  </p>
-
-                  <p>
-                    <b>Subject:</b> {doc.emailDraft.subject || "Not Provided"}
-                  </p>
-
-                  <pre style={emailBody}>{doc.emailDraft.body}</pre>
-
-                  <button onClick={() => copyText(doc.emailDraft.to)} style={buttonLight}>
-                    Copy To
-                  </button>
-
-                  <button
-                    onClick={() => copyText(doc.emailDraft.subject)}
-                    style={{ ...buttonLight, marginLeft: 8 }}
-                  >
-                    Copy Subject
-                  </button>
-
-                  <button
-                    onClick={() => copyText(doc.emailDraft.body)}
-                    style={{ ...buttonLight, marginLeft: 8 }}
-                  >
-                    Copy Body
-                  </button>
-
-                  <button
-                    onClick={() => updateDoc(doc.id, { emailed: true })}
-                    style={{ ...buttonGreen, marginLeft: 8 }}
-                  >
-                    Mark Email Done
-                  </button>
-                </div>
-              )}
+            <div style={methodBadge}>
+              Extraction Method:{" "}
+              <b>
+                {doc.extraction.extractionMethod || "Gemini AI"}
+              </b>
             </div>
+
+            {matchedRule && (
+              <div style={emailPanel}>
+                <button
+                  onClick={() => generateEmailDraft(doc)}
+                  style={buttonPurple}
+                >
+                  Generate Email
+                </button>
+
+                {doc.emailDraft && (
+                  <div style={{ marginTop: 15 }}>
+                    <p>
+                      <b>To:</b> {doc.emailDraft.to}
+                    </p>
+
+                    <p>
+                      <b>Subject:</b> {doc.emailDraft.subject}
+                    </p>
+
+                    <pre style={emailBody}>
+                      {doc.emailDraft.body}
+                    </pre>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         );
       })}
-
-      <div style={section}>
-        <h2>Email Rules Dashboard</h2>
-
-        <p style={{ color: "#64748b" }}>
-          Rules match by Entity Receiver + Receiving Country and generate
-          prepared email templates.
-        </p>
-
-        <div style={grid}>
-          <label style={label}>
-            Entity Receiver
-
-            <input
-              value={ruleForm.receiverEntity}
-              onChange={(e) =>
-                setRuleForm({
-                  ...ruleForm,
-                  receiverEntity: e.target.value,
-                })
-              }
-              style={input}
-            />
-          </label>
-
-          <label style={label}>
-            Receiving Country
-
-            <input
-              value={ruleForm.receivingCountry}
-              onChange={(e) =>
-                setRuleForm({
-                  ...ruleForm,
-                  receivingCountry: e.target.value,
-                })
-              }
-              style={input}
-            />
-          </label>
-
-          <label style={label}>
-            Send To
-
-            <input
-              value={ruleForm.sendTo}
-              onChange={(e) =>
-                setRuleForm({
-                  ...ruleForm,
-                  sendTo: e.target.value,
-                })
-              }
-              style={input}
-            />
-          </label>
-
-          <label style={label}>
-            Subject Template
-
-            <input
-              value={ruleForm.subject}
-              onChange={(e) =>
-                setRuleForm({
-                  ...ruleForm,
-                  subject: e.target.value,
-                })
-              }
-              style={input}
-            />
-          </label>
-        </div>
-
-        <label style={{ ...label, display: "block", marginTop: 12 }}>
-          Body Template
-
-          <textarea
-            value={ruleForm.body}
-            onChange={(e) =>
-              setRuleForm({
-                ...ruleForm,
-                body: e.target.value,
-              })
-            }
-            style={textarea}
-          />
-        </label>
-
-        <button onClick={addRule} style={buttonBlue}>
-          Add Email Rule
-        </button>
-
-        {rules.map((rule) => (
-          <div key={rule.id} style={ruleCard}>
-            <b>{rule.receiverEntity}</b> — {rule.receivingCountry}
-
-            <br />
-
-            Send To: <b>{rule.sendTo}</b>
-
-            <br />
-
-            Subject: {rule.subject}
-
-            <br />
-
-            <button
-              onClick={() => deleteRule(rule.id)}
-              style={{ ...buttonRed, marginTop: 8 }}
-            >
-              Delete Rule
-            </button>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -706,11 +544,43 @@ export default function App() {
 function Stat({ title, value }) {
   return (
     <div style={statCard}>
-      <div style={{ color: "#64748b", fontSize: 13 }}>{title}</div>
+      <div style={{ color: "#64748b", fontSize: 13 }}>
+        {title}
+      </div>
 
-      <div style={{ fontSize: 28, fontWeight: "bold" }}>{value}</div>
+      <div style={{ fontSize: 28, fontWeight: "bold" }}>
+        {value}
+      </div>
     </div>
   );
+}
+
+function confidenceBox(level) {
+  const styles = {
+    HIGH: {
+      background: "#dcfce7",
+      color: "#166534",
+      border: "1px solid #86efac",
+    },
+    MEDIUM: {
+      background: "#fef3c7",
+      color: "#92400e",
+      border: "1px solid #fcd34d",
+    },
+    LOW: {
+      background: "#fee2e2",
+      color: "#991b1b",
+      border: "1px solid #fca5a5",
+    },
+  };
+
+  return {
+    ...styles[level],
+    padding: 12,
+    borderRadius: 10,
+    marginTop: 12,
+    fontWeight: "bold",
+  };
 }
 
 const dashboard = {
@@ -727,15 +597,6 @@ const statCard = {
   background: "white",
 };
 
-const section = {
-  border: "1px solid #ddd",
-  borderRadius: 12,
-  padding: 22,
-  background: "white",
-  marginTop: 25,
-  marginBottom: 20,
-};
-
 const card = {
   border: "1px solid #ddd",
   borderRadius: 12,
@@ -744,30 +605,12 @@ const card = {
   background: "white",
 };
 
-const ruleCard = {
-  background: "#f8fafc",
-  border: "1px solid #e2e8f0",
-  borderRadius: 12,
-  padding: 14,
-  marginTop: 12,
-};
-
 const copyPanel = {
   background: "#f8fafc",
   border: "1px solid #e2e8f0",
   borderRadius: 12,
   padding: 14,
   marginTop: 15,
-};
-
-const duplicateBox = {
-  background: "#ffedd5",
-  border: "1px solid #fdba74",
-  color: "#9a3412",
-  borderRadius: 12,
-  padding: 14,
-  marginTop: 15,
-  fontWeight: "bold",
 };
 
 const emailPanel = {
@@ -789,16 +632,6 @@ const label = {
   fontWeight: "bold",
 };
 
-const input = {
-  display: "block",
-  width: "100%",
-  marginTop: 6,
-  padding: 10,
-  borderRadius: 8,
-  border: "1px solid #ccc",
-  boxSizing: "border-box",
-};
-
 const answerInput = {
   display: "block",
   width: "100%",
@@ -810,17 +643,6 @@ const answerInput = {
   color: "#dc2626",
   fontWeight: "bold",
   WebkitTextFillColor: "#dc2626",
-};
-
-const textarea = {
-  display: "block",
-  width: "100%",
-  minHeight: 80,
-  marginTop: 6,
-  padding: 10,
-  borderRadius: 8,
-  border: "1px solid #ccc",
-  boxSizing: "border-box",
 };
 
 const miniTable = {
@@ -850,6 +672,15 @@ const emailBody = {
   padding: 12,
   borderRadius: 8,
   border: "1px solid #ddd",
+};
+
+const methodBadge = {
+  marginTop: 15,
+  background: "#e0f2fe",
+  color: "#075985",
+  padding: 10,
+  borderRadius: 10,
+  fontWeight: "bold",
 };
 
 const errorBox = {
@@ -897,15 +728,6 @@ const buttonRed = {
   cursor: "pointer",
 };
 
-const buttonBlue = {
-  padding: "10px 14px",
-  borderRadius: 8,
-  border: "none",
-  background: "#2563eb",
-  color: "white",
-  cursor: "pointer",
-};
-
 const buttonPurple = {
   padding: "10px 14px",
   borderRadius: 8,
@@ -915,30 +737,9 @@ const buttonPurple = {
   cursor: "pointer",
 };
 
-const processedBadge = {
-  display: "inline-block",
-  marginLeft: 8,
-  padding: "6px 12px",
-  borderRadius: 999,
-  background: "#e0f2fe",
-  color: "#075985",
-  fontWeight: "bold",
-};
-
-const emailBadge = {
-  display: "inline-block",
-  marginLeft: 8,
-  padding: "6px 12px",
-  borderRadius: 999,
-  background: "#ede9fe",
-  color: "#5b21b6",
-  fontWeight: "bold",
-};
-
 function statusBadge(status) {
   const colors = {
     Approved: ["#dcfce7", "#166534"],
-    Processed: ["#e0f2fe", "#075985"],
     "Ready for Payment": ["#dcfce7", "#166534"],
     "Needs PO": ["#fef3c7", "#92400e"],
     "Manual Review": ["#fee2e2", "#991b1b"],
