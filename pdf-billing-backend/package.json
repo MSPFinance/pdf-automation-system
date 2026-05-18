@@ -8,10 +8,10 @@
   },
   "dependencies": {
     "@google/genai": "^1.52.0",
-    "@google/generative-ai": "^0.24.1",
     "cors": "^2.8.5",
+    "dotenv": "^17.2.3",
     "express": "^5.1.0",
     "multer": "^2.0.2",
-    "pdf-parse": "^2.4.5"
+    "pdf-parse": "1.1.1"
   }
 }
